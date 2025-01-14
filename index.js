@@ -8,6 +8,7 @@ import PdfPrinter from "pdfmake";
 import fs from "fs";
 import prettyBytes from "pretty-bytes";
 import { Client } from "basic-ftp";
+import { text } from "stream/consumers";
 
 // Define as fontes usadas no PDF
 let fonts = {
@@ -39,42 +40,69 @@ const fetchData = async () => {
     .format("YYYY-MM-DD")}T21:00:00.000Z`;
   const currentDate = `${moment().format("YYYY-MM-DD")}T21:00:00.000Z`;
 
-  await fetch(
-    `http://${process.env.WANGUARD_ADDR}/wanguard-api/v1/anomalies?from=%3E%3D${previousDate}&until=%3C%3D${currentDate}&fields=anomaly_id%2Cprefix%2Cip_group%2Canomaly%2Cunit%2Cfrom%2Cduration%2Cpkts%2Fs%2Cbits%2Fs`,
-    {
-      headers: {
-        Accept: "application/json",
-        Authorization: `Basic ${btoa(
-          `${process.env.WANGUARD_USER}:${process.env.WANGUARD_PASS}`
-        )}`,
-      },
-    }
-  )
-    .then((res) => res.json())
-    .then((data) => (anomalies = data));
+  try {
+    await fetch(
+      `http://${process.env.WANGUARD_ADDR}/wanguard-api/v1/anomalies?from=%3E%3D${previousDate}&until=%3C%3D${currentDate}&fields=anomaly_id%2Cprefix%2Cip_group%2Canomaly%2Cunit%2Cfrom%2Cduration%2Cpkts%2Fs%2Cbits%2Fs`,
+      {
+        headers: {
+          Accept: "application/json",
+          Authorization: `Basic ${btoa(
+            `${process.env.WANGUARD_USER}:${process.env.WANGUARD_PASS}`
+          )}`,
+        },
+      }
+    )
+      .then((res) => res.json())
+      .then((data) => {
+        if (data) anomalies = data;
+      });
+  } catch (error) {}
 };
 
 // Define a função que irá criar o PDF
 const generatePdf = (data) => {
   let tableData = [];
 
-  for (const item of data) {
-    tableData.push([
-      { text: item.anomaly_id, fontSize: 10 },
-      { text: item.ip_group, fontSize: 8 },
-      { text: item.prefix, fontSize: 10 },
-      { text: item.anomaly, fontSize: 10 },
-      { text: item.duration + "s", fontSize: 10 },
-      { text: item.from.iso_8601, fontSize: 8 },
-      { text: formatPackets(Number(item["pkts/s"])), fontSize: 10 },
-      {
-        text: prettyBytes(Number(item["bits/s"]), { bits: true }),
-        fontSize: 10,
-      },
-    ]);
-  }
+  if (data)
+    for (const item of data) {
+      tableData.push([
+        { text: item.anomaly_id, fontSize: 10 },
+        { text: item.ip_group, fontSize: 8 },
+        { text: item.prefix, fontSize: 10 },
+        { text: item.anomaly, fontSize: 10 },
+        { text: item.duration + "s", fontSize: 10 },
+        { text: item.from.iso_8601, fontSize: 8 },
+        { text: formatPackets(Number(item["pkts/s"])), fontSize: 10 },
+        {
+          text: prettyBytes(Number(item["bits/s"]), { bits: true }),
+          fontSize: 10,
+        },
+      ]);
+    }
 
   let docDefinition = {
+    header: function (page, pages) {
+      if (page !== 1) {
+        return {
+          text: `Relatório de Anomalias - ${
+            process.env.CUSTOMER
+          } - ${moment().format("DD/MM/YYYY")}`,
+          alignment: "center",
+          margin: [0, 10, 0, 10],
+        };
+      }
+    },
+    footer: function (page, pages) {
+      return {
+        columns: [
+          {
+            text: `${page.toString()}/${pages}`,
+            alignment: "right",
+            margin: [0, 10, 10, 0],
+          },
+        ],
+      };
+    },
     content: [
       {
         alignment: "center",
@@ -89,7 +117,14 @@ const generatePdf = (data) => {
           },
         ],
       },
-      {
+      !data && {
+        text: "Nenhuma anomalia foi detectada no período de 24 horas.",
+        style: "header",
+        alignment: "center",
+        fontSize: 20,
+        margin: [0, 10, 0, 10]
+      },
+      data && {
         style: "defaultTable",
         layout: {
           fillColor: function (rowIndex, node, columnIndex) {
@@ -116,6 +151,8 @@ const generatePdf = (data) => {
           ],
         },
       },
+
+      { image: "./assets/logo-branca.png", width: 250, alignment: "center" },
     ],
   };
 
@@ -133,7 +170,6 @@ const generatePdf = (data) => {
 // Define a função principal
 const main = async () => {
   await fetchData();
-  //console.log(anomalies);
   generatePdf(anomalies);
 
   // Instancia o cliente FTP
@@ -143,18 +179,23 @@ const main = async () => {
     await client.access({
       host: process.env.FTP_ADDR,
       user: process.env.FTP_USER,
-      password: process.env.FTP_PASS
-    })
-    
-    await client.ensureDir(`Relatorios/${moment().format("DD-MM-YYYY")}`)
-    await client.uploadFrom(`${process.env.CUSTOMER}-Anomalias-${moment().format("DD-MM-YYYY")}`, `${process.env.CUSTOMER}-Anomalias-${moment().format("DD-MM-YYYY")}`)
+      password: process.env.FTP_PASS,
+    });
+
+    await client.ensureDir(`Relatorios/${moment().format("DD-MM-YYYY")}`);
+    await client.uploadFrom(
+      `${process.env.CUSTOMER}-Anomalias-${moment().format("DD-MM-YYYY")}`,
+      `${process.env.CUSTOMER}-Anomalias-${moment().format("DD-MM-YYYY")}`
+    );
   } catch (error) {
-    console.log(error)
+    console.log(error);
   }
 
-  client.close()
+  client.close();
 
-  await fs.unlinkSync(`${process.env.CUSTOMER}-Anomalias-${moment().format("DD-MM-YYYY")}`)
+  await fs.unlinkSync(
+    `${process.env.CUSTOMER}-Anomalias-${moment().format("DD-MM-YYYY")}`
+  );
 };
 
 // Chama a função principal

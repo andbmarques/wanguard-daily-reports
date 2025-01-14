@@ -11,6 +11,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@masa-dev/web-file-base64": "^0.1.1",
     "basic-ftp": "^5.0.5",
     "dotenv": "^16.4.7",
     "moment": "^2.30.1",
