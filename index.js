@@ -7,8 +7,6 @@ import moment from "moment";
 import PdfPrinter from "pdfmake";
 import fs from "fs";
 import prettyBytes from "pretty-bytes";
-import { Client } from "basic-ftp";
-import { text } from "stream/consumers";
 
 // Define as fontes usadas no PDF
 let fonts = {
@@ -32,6 +30,19 @@ const formatPackets = (value) => {
     .replace("MB", "Mpkts")
     .replace("GB", "Gpkts");
 };
+
+// Define a função que irá converter o PDF para Base64
+async function convertPdfToBase64(filePath) {
+  try {
+    const fileBuffer = fs.readFileSync(filePath);
+    const base64String = fileBuffer.toString("base64");
+
+    return base64String;
+  } catch (error) {
+    console.error("Erro ao converter o PDF para Base64:", error);
+    throw error;
+  }
+}
 
 // Define a função de requisição das anomalias
 const fetchData = async () => {
@@ -60,7 +71,7 @@ const fetchData = async () => {
 };
 
 // Define a função que irá criar o PDF
-const generatePdf = (data) => {
+const generatePdf = (data, callback) => {
   let tableData = [];
 
   if (data)
@@ -122,7 +133,7 @@ const generatePdf = (data) => {
         style: "header",
         alignment: "center",
         fontSize: 20,
-        margin: [0, 10, 0, 10]
+        margin: [0, 10, 0, 10],
       },
       data && {
         style: "defaultTable",
@@ -159,6 +170,7 @@ const generatePdf = (data) => {
   let options = {};
 
   let pdfDoc = printer.createPdfKitDocument(docDefinition, options);
+
   pdfDoc.pipe(
     fs.createWriteStream(
       `${process.env.CUSTOMER}-Anomalias-${moment().format("DD-MM-YYYY")}`
@@ -169,33 +181,46 @@ const generatePdf = (data) => {
 
 // Define a função principal
 const main = async () => {
+  // Faz a requisição a API do Wanguard
   await fetchData();
-  generatePdf(anomalies);
 
-  // Instancia o cliente FTP
-  const client = new Client();
+  // Gera o pdf a partir das anomalias
+  await generatePdf(anomalies);
 
-  try {
-    await client.access({
-      host: process.env.FTP_ADDR,
-      user: process.env.FTP_USER,
-      password: process.env.FTP_PASS,
-    });
+  // Define a váriavel que irá receber a String Base64 do pdf
+  let b64;
 
-    await client.ensureDir(`Relatorios/${moment().format("DD-MM-YYYY")}`);
-    await client.uploadFrom(
-      `${process.env.CUSTOMER}-Anomalias-${moment().format("DD-MM-YYYY")}`,
+  // Define um tempo de espera de 5s para executar os comandos a seguir
+  setTimeout(async () => {
+    // Faz a conversão do PDF para Base64
+    b64 = await convertPdfToBase64(
+      `./${process.env.CUSTOMER}-Anomalias-${moment().format("DD-MM-YYYY")}`
+    );
+
+    // Deleta o arquivo PDF temporário
+    await fs.unlinkSync(
       `${process.env.CUSTOMER}-Anomalias-${moment().format("DD-MM-YYYY")}`
     );
-  } catch (error) {
-    console.log(error);
-  }
 
-  client.close();
-
-  await fs.unlinkSync(
-    `${process.env.CUSTOMER}-Anomalias-${moment().format("DD-MM-YYYY")}`
-  );
+    // Envia o documento para o Whatsapp através da api do Waseller
+    await fetch(
+      `https://api-whatsapp.wascript.com.br/api/enviar-documento/${process.env.API_TOKEN}`,
+      {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          phone: process.env.CUSTOMER_NUMBER,
+          base64: `data:application/pdf;base64,${b64}`,
+          name: `${process.env.CUSTOMER}-Anomalias-${moment().format(
+            "DD-MM-YYYY"
+          )}`,
+        }),
+      }
+    );
+  }, 5000);
 };
 
 // Chama a função principal
