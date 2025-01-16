@@ -66,8 +66,17 @@ const fetchData = async () => {
       .then((res) => res.json())
       .then((data) => {
         if (data) anomalies = data;
-      });
-  } catch (error) {}
+      })
+      .finally(() =>
+        console.log(
+          `${moment().format("DD-MM-YYYY")} | Anomalias capturadas com sucesso!`
+        )
+      );
+  } catch (error) {
+    console.log(
+      `${moment().format("DD-MM-YYYY")} | Erro ao capturar anomalias`
+    );
+  }
 };
 
 // Define a função que irá criar o PDF
@@ -128,14 +137,14 @@ const generatePdf = (data, callback) => {
           },
         ],
       },
-      !data && {
+      !data ? {
         text: "Nenhuma anomalia foi detectada no período de 24 horas.",
         style: "header",
         alignment: "center",
         fontSize: 20,
         margin: [0, 10, 0, 10],
-      },
-      data && {
+      } : {},
+      data ? {
         style: "defaultTable",
         layout: {
           fillColor: function (rowIndex, node, columnIndex) {
@@ -161,7 +170,7 @@ const generatePdf = (data, callback) => {
             ...tableData,
           ],
         },
-      },
+      } : {},
 
       { image: "./assets/logo-branca.png", width: 250, alignment: "center" },
     ],
@@ -177,6 +186,7 @@ const generatePdf = (data, callback) => {
     )
   );
   pdfDoc.end();
+  console.log(`${moment().format("DD-MM-YYYY")} | PDF Gerado com sucesso`);
 };
 
 // Define a função principal
@@ -192,34 +202,60 @@ const main = async () => {
 
   // Define um tempo de espera de 5s para executar os comandos a seguir
   setTimeout(async () => {
-    // Faz a conversão do PDF para Base64
-    b64 = await convertPdfToBase64(
-      `./${process.env.CUSTOMER}-Anomalias-${moment().format("DD-MM-YYYY")}`
-    );
+    try {
+      // Faz a conversão do PDF para Base64
+      b64 = await convertPdfToBase64(
+        `./${process.env.CUSTOMER}-Anomalias-${moment().format("DD-MM-YYYY")}`
+      );
 
-    // Deleta o arquivo PDF temporário
-    await fs.unlinkSync(
-      `${process.env.CUSTOMER}-Anomalias-${moment().format("DD-MM-YYYY")}`
-    );
+      // Deleta o arquivo PDF temporário
+      await fs.unlinkSync(
+        `${process.env.CUSTOMER}-Anomalias-${moment().format("DD-MM-YYYY")}`
+      );
 
-    // Envia o documento para o Whatsapp através da api do Waseller
-    await fetch(
-      `https://api-whatsapp.wascript.com.br/api/enviar-documento/${process.env.API_TOKEN}`,
-      {
-        method: "POST",
-        headers: {
-          accept: "application/json",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          phone: process.env.CUSTOMER_NUMBER,
-          base64: `data:application/pdf;base64,${b64}`,
-          name: `${process.env.CUSTOMER}-Anomalias-${moment().format(
-            "DD-MM-YYYY"
-          )}`,
-        }),
-      }
-    );
+      console.log(
+        `${moment().format(
+          "DD-MM-YYYY"
+        )} | Base64 Gerado e PDF Temporário Excluido`
+      );
+    } catch (error) {
+      console.log(
+        `${moment().format(
+          "DD-MM-YYYY"
+        )} | Erro ao gerar Base64 e/ou Excluir PDF Temporário`
+      );
+    }
+
+    try {
+      // Envia o documento para o Whatsapp através da api do Waseller
+      await fetch(
+        `https://api-whatsapp.wascript.com.br/api/enviar-documento/${process.env.API_TOKEN}`,
+        {
+          method: "POST",
+          headers: {
+            accept: "application/json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            phone: process.env.CUSTOMER_NUMBER,
+            base64: `data:application/pdf;base64,${b64}`,
+            name: `${process.env.CUSTOMER}-Anomalias-${moment().format(
+              "DD-MM-YYYY"
+            )}`,
+          }),
+        }
+      ).finally(() => console.log(
+        `${moment().format(
+          "DD-MM-YYYY"
+        )} | Sucesso ao realizar envio para Whatsapp`
+      ));
+    } catch (error) {
+      console.log(
+        `${moment().format(
+          "DD-MM-YYYY"
+        )} | Erro ao realizar envio para Whatsapp`
+      );
+    }
   }, 5000);
 };
 
